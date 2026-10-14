@@ -1,0 +1,8 @@
+version: '3.8'
+
+services:
+  app:
+    container_name: fantacy-chat-app
+    build: .
+    ports:
+      - "3000:3000"

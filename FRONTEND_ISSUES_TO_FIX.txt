@@ -1,0 +1,277 @@
+FRONTEND ISSUES TO FIX
+Project: fantacy-chat-frontend
+Date: 2026-08-05
+
+1. Socket URL is using a non-public environment variable
+Priority: Critical
+File: src/app/(protected-routes)/(fantacy)/chats/[group]/[id]/websocketService.tsx
+Issue:
+- The socket client uses process.env.SOCKET_URL.
+- In Next.js browser code, environment variables must be prefixed with NEXT_PUBLIC_.
+- Current .env does not define SOCKET_URL or NEXT_PUBLIC_SOCKET_URL.
+Impact:
+- Chat sockets may connect to undefined or fail in production.
+Fix:
+- Add NEXT_PUBLIC_SOCKET_URL to .env.
+- Change io(process.env.SOCKET_URL) to io(process.env.NEXT_PUBLIC_SOCKET_URL).
+
+2. API auth token is not applied globally
+Priority: Critical
+File: src/common/utils/axios-instance.ts
+Issue:
+- Authorization header setup is commented out.
+- Many pages manually read localStorage and manually attach Bearer tokens.
+Impact:
+- API calls can fail inconsistently.
+- Code duplication increases risk of missing auth headers.
+Fix:
+- Add a request interceptor that reads accessToken on the client and attaches Authorization.
+- Remove repeated manual token/header logic from pages where possible.
+
+3. localStorage is used directly during render in many client components
+Priority: High
+Files:
+- src/app/(protected-routes)/admin/chats/[group]/[id]/page.tsx
+- src/app/(protected-routes)/(fantacy)/chats/[group]/[id]/page.tsx
+- src/app/(protected-routes)/admin/users/page.tsx
+- src/app/(protected-routes)/admin/dashboard/page.tsx
+- src/app/(protected-routes)/(fantacy)/events/page.tsx
+- many other protected pages
+Issue:
+- localStorage is accessed directly at component top level.
+Impact:
+- Can cause hydration/runtime errors if a component is rendered before browser APIs are available.
+- Makes auth state harder to control.
+Fix:
+- Read localStorage inside useEffect or through a shared client-only auth hook.
+- Prefer a single useAccount/useAuth pattern.
+
+4. Admin and user chat pages duplicate almost the same code
+Priority: High
+Files:
+- src/app/(protected-routes)/admin/chats/[group]/[id]/page.tsx
+- src/app/(protected-routes)/(fantacy)/chats/[group]/[id]/page.tsx
+Issue:
+- Message rendering, socket connection, history fetching, media preview, edit/delete, emoji, and scroll logic are duplicated.
+Impact:
+- Bugs must be fixed twice.
+- Admin and user chat behavior can drift.
+Fix:
+- Extract shared components/hooks:
+  - useChatSocket
+  - ChatMessageList
+  - ChatComposer
+  - ChatHeader
+  - MediaPreviewModal
+
+5. Chat page opens both direct and group sockets/history for every chat
+Priority: High
+Files:
+- src/app/(protected-routes)/admin/chats/[group]/[id]/page.tsx
+- src/app/(protected-routes)/(fantacy)/chats/[group]/[id]/page.tsx
+Issue:
+- The page calls getChatHistory and getGroupChatHistory.
+- It also connects direct socket and group socket.
+- This happens even when the route is only one chat type.
+Impact:
+- Duplicate messages.
+- Extra network/socket load.
+- Wrong messages can appear in the wrong conversation.
+Fix:
+- Derive chat type from route params.
+- Only connect one socket mode:
+  - direct/user/admin chat -> connectSocket + getChatHistory
+  - group chat -> connectGroupSocket + getGroupChatHistory
+
+6. Socket disconnect is too broad
+Priority: High
+File: src/app/(protected-routes)/(fantacy)/chats/[group]/[id]/websocketService.tsx
+Issue:
+- Multiple components share one socket instance.
+- Individual components call disconnectSocket during cleanup.
+Impact:
+- Leaving one chat view can disconnect sockets needed by the chat layout/unread counters.
+Fix:
+- Use event-level cleanup instead of always disconnecting.
+- Only disconnect when the authenticated user leaves the full chat module or logs out.
+
+7. useEffect dependencies can cause repeated API calls and unstable rerenders
+Priority: High
+File: src/app/(protected-routes)/(fantacy)/chats/[group]/[id]/page.tsx
+Issue:
+- fetchRandomAdmin is included in a dependency array but is recreated every render.
+Impact:
+- Can trigger repeated effects and unnecessary API calls.
+Fix:
+- Wrap fetchRandomAdmin in useCallback, or remove it from dependencies and depend on the state it updates.
+
+8. Selected chat header has incorrect empty-state logic
+Priority: Medium
+File: src/app/(protected-routes)/(fantacy)/chats/[group]/[id]/page.tsx
+Issue:
+- renderUserOrGroupDetails checks if (!selectedUserOrGroup), but then tries to read selectedUserOrGroup?.avatar and selectedUserOrGroup?.displayname.
+Impact:
+- Header can show blank/unknown data when user/group is not loaded.
+Fix:
+- Render a proper loading or "Unknown chat" state when selectedUserOrGroup is null.
+
+9. Message scroll-bottom detection is fragile
+Priority: Medium
+Files:
+- src/app/(protected-routes)/admin/chats/[group]/[id]/page.tsx
+- src/app/(protected-routes)/(fantacy)/chats/[group]/[id]/page.tsx
+Issue:
+- It checks exact equality:
+  container.scrollHeight === container.scrollTop + container.clientHeight
+Impact:
+- Due to sub-pixel values, browser zoom, or layout changes, read receipts/auto-scroll may fail.
+Fix:
+- Use a threshold:
+  Math.abs(container.scrollHeight - container.scrollTop - container.clientHeight) < 10
+
+10. Enter key sends message but does not support Shift+Enter properly
+Priority: Medium
+Files:
+- chat message pages
+Issue:
+- Pressing Enter sends immediately from textarea.
+Impact:
+- Users cannot easily create multiline messages.
+Fix:
+- Send on Enter only when !event.shiftKey.
+- Allow Shift+Enter to insert a new line.
+
+11. File upload type handling is incomplete
+Priority: Medium
+Files:
+- chat message pages
+Issue:
+- Unsupported files are currently accepted.
+- If file type is neither image nor video, type becomes text but media is still sent.
+Impact:
+- Backend may receive invalid media payloads.
+Fix:
+- Validate accepted MIME types before setting file.
+- Show a user-facing error for invalid files.
+
+12. Broken/encoded emoji text appears in UI
+Priority: Medium
+Files:
+- src/app/(protected-routes)/admin/chats/[group]/[id]/page.tsx
+- src/app/(protected-routes)/(fantacy)/chats/[group]/[id]/page.tsx
+Issue:
+- The emoji button contains broken encoded text like ðŸ˜Š in at least one file.
+Impact:
+- UI looks unprofessional.
+Fix:
+- Replace with a proper icon from react-icons or a valid emoji character.
+
+13. Many console.log statements remain in production code
+Priority: Medium
+Files:
+- chat pages
+- feeds/bookmark pages
+- admin dashboard/posts/coupon/managers
+- auth signup/login related files
+Issue:
+- Debug logs expose internal data and clutter browser console.
+Impact:
+- Possible privacy leak and poor production quality.
+Fix:
+- Remove console.log statements or guard them behind a development-only logger.
+
+14. Heavy use of any weakens TypeScript protection
+Priority: Medium
+Files:
+- most chat/admin/feed pages
+Issue:
+- State and API responses often use any.
+Impact:
+- Runtime bugs are easier to introduce and harder to catch during build.
+Fix:
+- Add shared types for User, Group, Message, Media, Subscription, Coupon, Event.
+- Replace useState<any> with typed state.
+
+15. Remote image config may not match backend URLs
+Priority: Medium
+File: next.config.js
+Issue:
+- Remote patterns allow localhost:4000 and backend.matchcare.nl.
+- .env backend is localhost:9000/api.
+Impact:
+- Next Image may reject images from the actual backend host/port if Image is used.
+Fix:
+- Add the real backend/media host to remotePatterns.
+- Keep config aligned with NEXT_PUBLIC_BACKEND_URL.
+
+16. Route spelling and naming issues
+Priority: Low
+Files/routes:
+- src/app/subscprition/page.tsx
+- src/app/(protected-routes)/(fantacy)
+Issue:
+- "subscprition" and "fantacy" are misspelled.
+Impact:
+- URLs and imports are confusing and easier to break.
+Fix:
+- Plan a route migration with redirects before renaming.
+
+17. Admin manager route is misspelled
+Priority: Low
+Files/routes:
+- src/app/(protected-routes)/admin/mangers/page.tsx
+- src/app/(protected-routes)/admin/mangers/Signup.tsx
+Issue:
+- "mangers" should probably be "managers".
+Impact:
+- Confusing route and maintenance naming.
+Fix:
+- Rename route after adding redirect compatibility.
+
+18. Unused state and variables exist in chat pages
+Priority: Low
+Files:
+- chat message pages
+Issue:
+- error, userData, contextMenuPosition, PlayerRef, and some handlers appear unused or partially unused.
+Impact:
+- More noise and harder debugging.
+Fix:
+- Remove unused state/imports or wire them into real UI behavior.
+
+19. Some API requests bypass common API helpers
+Priority: Low
+Files:
+- many protected pages use axios directly
+Issue:
+- The app has common API helpers but many pages still use raw axios.
+Impact:
+- Inconsistent error handling, auth, and response handling.
+Fix:
+- Standardize on getApi/postApi/patchApi/postFormData, or create typed domain API modules.
+
+20. Frontend needs AI-ready chat UI states
+Priority: Low
+Relevant to planned AI feature
+Files:
+- chat message pages
+- chat layouts
+Issue:
+- No UI support yet for AI assistant messages, AI typing, AI enabled/disabled status, or handoff-to-admin state.
+Impact:
+- AI replies may look like normal user/admin messages and confuse users.
+Fix:
+- Add senderType/isBot rendering support.
+- Add AI badge/avatar.
+- Add typing indicator for AI-generated replies.
+- Add admin settings UI for AI auto-reply status.
+
+RECOMMENDED FIX ORDER
+
+1. Fix socket env variable and connection mode selection.
+2. Add global auth interceptor.
+3. Refactor shared chat socket/message logic.
+4. Remove production console logs.
+5. Fix chat UI bugs: encoded emoji, Shift+Enter, scroll threshold, null header state.
+6. Add stronger TypeScript models.
+7. Add frontend support for AI bot messages after backend AI responder is built.
